@@ -1,0 +1,12 @@
+{
+  "preference_only": {
+    "infeasible_mean": 10.0,
+    "caught": "0/5",
+    "feasible_mean": 10.0
+  },
+  "physics": {
+    "infeasible_mean": -490.5,
+    "caught": "5/5",
+    "feasible_mean": 10.0
+  }
+}

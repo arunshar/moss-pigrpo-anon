@@ -1,0 +1,15 @@
+{
+  "w_hard=5.0": {
+    "base_violation_rate": 0.5,
+    "trained_violation_rate": 0.0
+  },
+  "meta": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "params": "0.5B",
+    "steps": 20,
+    "K": 4,
+    "vmax": 30.0,
+    "device": "cpu",
+    "flops_estimate": "<1e15 (far below the 1e20 cap)"
+  }
+}

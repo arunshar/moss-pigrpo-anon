@@ -1,0 +1,229 @@
+% ============================================================
+%  MOSS @ COLM 2026  (Methods and Opportunities at Small Scale)
+%  Official MOSS / ICML-2025 single-column template (blind).
+%  Style files (icml2025.sty etc.) downloaded from the MOSS Drive folder.
+%  For the camera-ready, switch the blind line to:
+%      \usepackage[accepted]{MOSS_camera_ready}
+%  House rule: no em dashes anywhere, including comments.
+% ============================================================
+\documentclass{article}
+
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Blind submission (anonymized, line-numbered):
+\usepackage{icml2025}
+% Camera-ready instead would be: \usepackage[accepted]{MOSS_camera_ready}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\newtheorem{proposition}{Proposition}
+
+% Dense single-column layout: tighten float, display, section, and paragraph
+% spacing only (no change to font size or margins, so the template geometry and
+% the ICML heading format are preserved). Also shorten the under-review notice.
+\setlength{\textfloatsep}{5pt plus 2pt minus 2pt}
+\setlength{\intextsep}{5pt plus 2pt minus 2pt}
+\setlength{\abovedisplayskip}{3pt plus 1pt minus 1pt}
+\setlength{\belowdisplayskip}{3pt plus 1pt minus 1pt}
+\setlength{\abovedisplayshortskip}{1.5pt plus 1pt}
+\setlength{\belowdisplayshortskip}{1.5pt plus 1pt}
+\setlength{\parskip}{0pt}
+\setlength{\abovecaptionskip}{3pt}
+\setlength{\belowcaptionskip}{0pt}
+\makeatletter
+\def\section{\@startsection{section}{1}{\z@}{-0.055in}{0.008in}{\large\bf\raggedright}}
+\def\subsection{\@startsection{subsection}{2}{\z@}{-0.05in}{0.006in}{\normalsize\bf\raggedright}}
+\def\paragraph{\@startsection{paragraph}{4}{\z@}{0.6ex plus 0.3ex minus .1ex}{-1em}{\normalsize\bf}}
+\renewcommand{\Notice@String}{Under review.}
+\makeatother
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Bpref}{B_{\mathrm{pref}}}
+\newcommand{\Baux}{B_{\mathrm{aux}}}
+\newcommand{\Phiy}{\Phi(y)}
+\newcommand{\kl}[2]{D_{\mathrm{KL}}\!\left(#1 \,\|\, #2\right)}
+\newcommand{\relu}[1]{\left(#1\right)_{\!+}}
+\newcommand{\Rhard}{R_{\mathrm{hard}}}
+\newcommand{\pref}{\pi_{\mathrm{ref}}}
+
+\icmltitlerunning{Physics as a Hard Reward Floor}
+
+% Override the ICML style's default PDF Subject so the metadata names the real venue.
+\ifdefined\hypersetup
+  \hypersetup{pdfsubject={Methods and Opportunities at Small Scale (MOSS), COLM 2026}}
+\fi
+
+\begin{document}
+
+\onecolumn
+\icmltitle{Physics as a Hard Reward Floor: A Small-Scale, Controlled\\
+           Study of Reward-Hacking Mitigation in RL Post-Training}
+
+\icmlsetsymbol{equal}{*}
+\begin{icmlauthorlist}
+\icmlauthor{Anonymous Author(s)}{anon}
+\end{icmlauthorlist}
+\icmlaffiliation{anon}{Anonymous Institution}
+\icmlcorrespondingauthor{Anonymous Author(s)}{anon@example.com}
+\icmlkeywords{reward hacking, RL post-training, GRPO, DPO, PPO, safety, small scale}
+\vskip 0.12in
+
+\printAffiliationsAndNotice{}
+
+\begin{abstract}
+Reinforcement-learning post-training optimizes a reward that scores surface form, so a fluent but physically impossible completion can be rewarded by a rater yet is operationally wrong, a reward-hacking failure. We study a simple structural defense at small scale: an \emph{unbounded} hard penalty on physical-law violations, added to the reward so that a single sustained violation dominates any preference signal, exposed to PPO, DPO, and GRPO through one shared reward path. A model-agnostic, CPU-only probe makes the effect exact: a preference-only reward never flags an infeasible completion (0/5 caught), while the unbounded physics term catches every one (5/5) without touching feasible completions. During a short GRPO run on a 0.5B model, the preference-only reward hacks the policy (hard-violation rate rises from 0.58 to 1.00) while the unbounded physics floor drives it to zero (0.50 to 0.00); everything reproduces in a released free-Colab notebook under $10^{15}$ FLOPs.
+\end{abstract}
+
+\section{Introduction}
+A reinforcement-learning (RL) post-training pipeline is only as trustworthy as its reward. When the reward is a learned preference model or a human-rating proxy, it scores the \emph{surface form} of a completion. In safety-critical settings the surface form and the ground truth diverge: a trajectory that reads fluently but exceeds a physical speed or curvature limit is rewarded by a rater and by a preference model, yet is operationally invalid. Optimizing such a reward produces reward hacking~\cite{skalse2022,casper2023}: the policy games the proxy at the expense of the property we actually care about.
+
+This failure, and its mitigation, is a good fit for study at \emph{small scale}. The mechanism does not depend on model size: the reward operates on the physical interpretation of a completion, so a controlled probe can isolate it on CPU with no model at all, and a small (at most 3B) policy is enough to show the effect during training. Small scale also lets us iterate quickly and report exact, reproducible numbers instead of chasing leaderboard performance. This matches the workshop's spirit: an algorithmic method and a clean diagnosis of a failure mode, under a tight compute budget.
+
+\paragraph{Contributions.}
+(i) A structural reward-hacking defense: an \emph{unbounded} hard penalty on physical-law violations, with a dominance argument showing one violation cannot be outweighed by any bounded preference term (Section~\ref{sec:method}). (ii) A model-agnostic, CPU-only reward-hacking \emph{probe} that quantifies the failure and its fix, reproducible in a free Colab notebook. (iii) A single reward surface shared by PPO, DPO, and GRPO, so the same physics term plugs into three trainers. (iv) Measured guardrail, hot-path-cost, and small-scale GRPO training results with reported FLOP budgets and a released notebook artifact; the larger-model policy run is kept separate and reported only as diagnostic targets.
+
+\section{Method}
+\label{sec:method}
+\paragraph{Preliminaries.}
+The single-axle kinematic-bicycle model (S-KBM)~\cite{kong2015} advances a state $(x,y,\theta,v)$ under controls $(a,\delta)$ by $x'=x+v\cos\theta\,h$, $y'=y+v\sin\theta\,h$, $\theta'=\theta+(v/L)\tan\delta\,h$, and $v'=v+ah$, with wheelbase $L$ and step $h$; it defines the speed, acceleration, and curvature envelope used below. Three RL post-trainers share one reward. PPO~\cite{schulman2017} optimizes the clipped surrogate $\E[\min(\rho_t A_t,\,\mathrm{clip}(\rho_t,1-\epsilon,1+\epsilon)A_t)]$ with importance ratio $\rho_t$ and advantage $A_t$. GRPO~\cite{shao2024} drops the value head and uses a group-relative advantage. DPO~\cite{rafailov2023} learns directly from preference triples $(x,y_w,y_l)$. We keep one reward implementation behind all three, so no trainer holds a private copy of the physics.
+
+We optimize the standard KL-regularized return, with $x$ a prompt, $y$ a completion, $\pi_\theta$ the policy, and $\pref$ a frozen reference:
+\begin{equation}
+\max_\theta\; \E_{x\sim\mathcal{D},\, y\sim\pi_\theta(\cdot\mid x)}\big[\, R(x,y) - \beta_{\mathrm{KL}}\,\kl{\pi_\theta(\cdot\mid x)}{\pref(\cdot\mid x)} \,\big].
+\end{equation}
+The reward decomposes into a hard physics term, a soft envelope term, a data-prior term, and an optional preference term,
+\begin{equation}
+R(\tau) = w_{\mathrm{hard}} \Rhard(\tau) + w_{\mathrm{soft}} R_{\mathrm{soft}}(\tau) + w_{\mathrm{data}} R_{\mathrm{data}}(\tau) + w_{\mathrm{pref}} R_{\mathrm{pref}}(\tau),
+\label{eq:reward}
+\end{equation}
+where $\tau$ is the physical interpretation of $y$, here a trajectory of speeds $v_t$, accelerations $a_t$, and curvatures $\kappa_t$. The hard term sums relative excess over a single-axle kinematic-bicycle (S-KBM) envelope~\cite{kong2015}:
+\begin{equation}
+\Rhard(\tau) = -\sum_t \left[ \relu{\tfrac{|v_t|}{v_{\max}} - 1} + \relu{\tfrac{|a_t|}{a_{\max}} - 1} + \relu{\tfrac{|\kappa_t|}{\kappa_{\max}} - 1} \right], \qquad \kappa_{\max} = \tfrac{|\tan\delta_{\max}|}{L},
+\label{eq:hard}
+\end{equation}
+with $L$ the wheelbase and $\delta_{\max}$ the maximum steering angle. The key property is that $\Rhard$ is \emph{unbounded below} and is never clipped, so a sustained violation produces an arbitrarily large penalty. The soft term is a bounded, calibrated penalty on envelope-tail statistics,
+\begin{equation}
+R_{\mathrm{soft}}(\tau) = -\big[(\kappa_{p95}-\kappa_{\mathrm{ref}})_{+} + (j_{p95}-j_{\mathrm{ref}})_{+}\big] - \tfrac{1}{2}(\rho_v + \rho_a + \rho_\delta),
+\label{eq:soft}
+\end{equation}
+where $\kappa_{p95}, j_{p95}$ are the 95th-percentile curvature and jerk, $\kappa_{\mathrm{ref}}, j_{\mathrm{ref}}$ their empirical references, and $\rho_\bullet$ the per-step violation fractions; $R_{\mathrm{data}}$ is a frozen trajectory-prior log-likelihood and $R_{\mathrm{pref}}$ a learned preference score. Only $\Rhard$ is unbounded, which gives the reward a floor that the following makes precise.
+
+\begin{proposition}[Reward floor]
+\label{prop:floor}
+Let the preference term be bounded, $|R_{\mathrm{pref}}|\le \Bpref$, and the soft and data terms bounded, $|w_{\mathrm{soft}} R_{\mathrm{soft}} + w_{\mathrm{data}} R_{\mathrm{data}}|\le \Baux$, and let $\Phi(y) = -\Rhard(\tau(y)) \ge 0$ be the violation sum. For any feasible $y^{+}$ (with $\Phi(y^{+})=0$) and any $y^{-}$,
+\begin{equation}
+R(x,y^{+}) - R(x,y^{-}) \;\ge\; w_{\mathrm{hard}}\,\Phi(y^{-}) - 2 w_{\mathrm{pref}} \Bpref - 2\Baux .
+\label{eq:floor}
+\end{equation}
+Hence every $y^{-}$ with $\Phi(y^{-}) > (2 w_{\mathrm{pref}} \Bpref + 2\Baux)/w_{\mathrm{hard}}$ is ranked below every feasible completion, for any preference weight.
+\end{proposition}
+\begin{proof}
+Expanding $R$ from \cref{eq:reward}, $R(x,y^{+}) - R(x,y^{-}) = w_{\mathrm{hard}}(\Phi(y^{-})-\Phi(y^{+})) + w_{\mathrm{pref}}(R_{\mathrm{pref}}(y^{+})-R_{\mathrm{pref}}(y^{-})) + \Delta_{\mathrm{aux}}$. Using $\Phi(y^{+})=0$ and bounding the preference gap by $2 w_{\mathrm{pref}} \Bpref$ and $\Delta_{\mathrm{aux}}$ by $2\Baux$ yields \cref{eq:floor}; the threshold makes the right side positive.
+\end{proof}
+This is a structural defense, not a tuned hyperparameter: as the violation grows the hard term cannot be hidden by a fluent rationale or an overconfident preference classifier.
+
+\paragraph{One reward, three trainers.}
+The same $R$ feeds three interchangeable heads. GRPO~\cite{shao2024} samples $K$ completions per prompt and uses the group-relative advantage $A_k = (R_k - \mu_K)/\sigma_K$ with no value head. PPO~\cite{schulman2017} keeps a value head and an adaptive KL controller. DPO~\cite{rafailov2023} is augmented with a physics term,
+\begin{equation}
+\Delta = \beta\!\left[\log\tfrac{\pi_\theta(y_w\mid x)}{\pref(y_w\mid x)} - \log\tfrac{\pi_\theta(y_l\mid x)}{\pref(y_l\mid x)}\right] - \gamma_{\mathrm{phys}}\big(\Phi(y_w) - \Phi(y_l)\big),
+\end{equation}
+with loss $-\log\sigma(\Delta)$, so $\gamma_{\mathrm{phys}}=0$ recovers vanilla DPO and the physics term can flip a pair whose preferred side is the less physical one. \Cref{alg:grpo} gives the GRPO instance; the floor of \cref{prop:floor} holds for whichever trainer consumes $R$.
+
+\begin{algorithm}[t]
+\caption{Physics-informed GRPO update (one shared reward)}
+\label{alg:grpo}
+\begin{algorithmic}[1]
+\REQUIRE prompt batch $\mathcal{B}$, policy $\pi_\theta$, frozen reference $\pref$, group size $K$, reward $R$
+\FOR{each prompt $x \in \mathcal{B}$}
+  \STATE sample $K$ completions $y_{1:K}\sim\pi_\theta(\cdot\mid x)$ and parse each into a trajectory $\tau(y_k)$
+  \STATE compute decomposed rewards $R_k = R(x,y_k)$ and violation sums $\Phi_k = -\Rhard(\tau(y_k))$
+  \STATE group-normalize $A_k = (R_k - \mu_K)/(\sigma_K + \epsilon)$ \hfill // no value head
+\ENDFOR
+\STATE form token ratios $\rho_{k,t} = \pi_\theta(y_{k,t}\mid x,y_{k,<t}) / \pi_{\theta_{\mathrm{old}}}(y_{k,t}\mid x,y_{k,<t})$
+\STATE minimize $-\min(\rho_{k,t} A_k,\, \mathrm{clip}(\rho_{k,t},1-\epsilon,1+\epsilon) A_k) + \beta_{\mathrm{KL}}\,\kl{\pi_\theta}{\pref}$
+\STATE reject the update on a safe-range, NaN, or hard-invariant failure; otherwise checkpoint
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{The Reward-Hacking Probe.}
+The probe isolates the mechanism with no training and no large model. We construct a small set of completions, some feasible (inside the S-KBM envelope) and some infeasible (a fluent trajectory that exceeds the envelope, e.g.\ speed well above $v_{\max}$), and give each a high preference score, modeling a rater that rewards fluency. We then score them under two reward configurations; Table~\ref{tab:probe} reports the mean total reward on the infeasible completions and the catch rate (the fraction flagged as violations). The result is clear and model-free: turning on the unbounded physics term moves an infeasible completion from $+10.0$ (indistinguishable from feasible) to $-490.5$ (ranked below every feasible output), and the catch rate goes from 0/5 to 5/5. Because the probe is pure CPU and depends only on the reward, it is fully reproducible in a free-tier notebook and transfers unchanged across model sizes.
+
+\begin{table}[t]
+\centering
+\caption{Reward-hacking probe (CPU, fixed seed). Mean total reward on an infeasible, physics-violating completion, and the fraction caught. The preference-only reward cannot tell feasible from infeasible; the unbounded hard term catches all of them while leaving feasible completions untouched.}
+\label{tab:probe}
+\vskip 0.03in
+\begin{tabular}{lccc}
+\toprule
+\textbf{Reward configuration} & \textbf{Infeasible mean $R$} & \textbf{Caught} & \textbf{Feasible mean $R$} \\
+\midrule
+Preference-only ($w_{\mathrm{hard}}=0$)           & $+10.0$  & 0/5 \,(0\%)            & $+10.0$ \\
+Physics-grounded ($w_{\mathrm{hard}}=5$, default)  & $-490.5$ & \textbf{5/5 \,(100\%)} & $+10.0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Guardrails, Cost, and Small-Scale Eligibility}
+\label{sec:eval}
+\paragraph{Measured guardrails (CPU).}
+A 13/13 acceptance-test suite covers the S-KBM update, reward signs, the GRPO advantage, the KL controller, and the safe-range guard. A golden-dataset evaluator returns $\Rhard = -8.66$ on a speeding case (expected hard violation) and $0$ on a clean case, with the verdict correct on 2/2. The adaptive KL controller holds the mean KL within $[3,8]$ over 3{,}000 steps, while ablations that disable it spike the KL above 50 within 500 steps. A safe-range guard rejects 100\% of 100 out-of-range samples with no false positives.
+
+\paragraph{Hot-path cost.}
+Because the reward is evaluated on every rollout, its cost matters under a tight budget. Single-threaded on CPU, the S-KBM evaluator runs at about 23k ops/s (43\,$\mu$s), the full hybrid reward at about 19k ops/s (52\,$\mu$s), and preference synthesis at about 712k ops/s (1.4\,$\mu$s), so reward evaluation does not bottleneck a small rollout loop.
+
+\paragraph{Measured small-scale GRPO.}
+We confirm the effect during training on Qwen2.5-0.5B-Instruct with a short GRPO run (group size $K=4$, 20 to 50 steps, on a single laptop GPU/CPU, under $10^{15}$ FLOPs, far below the workshop cap). Table~\ref{tab:grpo} reports the hard-violation rate (the fraction of sampled completions outside the S-KBM envelope) before and after training under the two reward configurations. Training on the preference-only reward \emph{hacks} the policy: the violation rate rises from 0.58 to 1.00 as the model learns to emit ever-faster, infeasible speeds that the rater rewards. The unbounded physics floor reverses this, driving the same model from 0.50 to 0.00, fully inside the envelope. The probe, the guardrails, and this run all sit far below the budget cap and use only a laptop; we release the reward implementation, the probe, the test suite, the GRPO script, and a free-Colab notebook as artifacts.
+
+\begin{table}[t]
+\centering
+\caption{Measured small-scale GRPO on Qwen2.5-0.5B-Instruct (laptop GPU/CPU, $<10^{15}$ FLOPs). Hard-violation rate before and after a short GRPO run. Preference-only training hacks the reward (violations rise to 1.00); the unbounded physics floor drives them to 0.00.}
+\label{tab:grpo}
+\vskip 0.03in
+\begin{tabular}{lcc}
+\toprule
+\textbf{Reward configuration} & \textbf{Base} & \textbf{Trained} \\
+\midrule
+Preference-only ($w_{\mathrm{hard}}=0$)            & 0.58 & \textbf{1.00} \\
+Physics-grounded ($w_{\mathrm{hard}}=5$, default)  & 0.50 & \textbf{0.00} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Scope (in progress).}
+A full multi-thousand-step policy run on a larger model is separate from this study and is \emph{not} a measured result here. Table~\ref{tab:targets} lists the trained-policy violation rates we target, as diagnostic expectations rather than measurements; the released notebook is the small-scale instrument for reaching them.
+
+\begin{table}[t]
+\centering
+\caption{\emph{In progress, not measured.} Diagnostic targets for a trained policy, listed to make the expected trend explicit. Lower is better for violation and KL.}
+\label{tab:targets}
+\vskip 0.03in
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Configuration} & hard-violation & soft-envelope p95 & preference-win & KL \\
+\midrule
+Supervised base                 & 0.14 & 0.31 & 0.50 & 0.00 \\
+GRPO $+$ hard floor (target)     & 0.01 & 0.13 & 0.62 & 0.10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Related Work}
+Preference-based and RL post-training span PPO~\cite{schulman2017} over generalized advantage estimates~\cite{schulman2016}, DPO~\cite{rafailov2023}, and group-relative GRPO~\cite{shao2024}, scaled through RLHF recipes~\cite{ouyang2022,stiennon2020} and reasoning-focused RL~\cite{guo2025}. Reward hacking and proxy-reward exploitation are formalized in~\cite{skalse2022,casper2023}, with measured reward-model overoptimization~\cite{gao2023} and misspecification~\cite{pan2022} effects as the policy is pushed harder. These mitigations act on the learned reward or the optimizer; we instead add a domain-grounded, \emph{unbounded} hard term, prove it dominates any bounded preference signal (\cref{prop:floor}), share one reward surface across PPO, DPO, and GRPO, and isolate the effect with a model-free probe. The kinematic-bicycle envelope is standard in vehicle modeling~\cite{kong2015}; we use it only as a concrete, cheap, differentiable instance of a hard physical law.
+
+\section{Conclusion}
+An unbounded hard penalty on physical-law violations is a simple, model-agnostic, small-compute defense against reward hacking: it gives the reward a floor that no preference signal can lift a violating completion above. A CPU-only probe makes the effect exact and reproducible, three trainers share one reward path, and the whole study fits a free-tier budget. The small-scale regime is what makes this kind of controlled diagnosis cheap, and that is the value of working here.
+
+\bibliography{moss}
+\bibliographystyle{icml2025}
+
+\end{document}
